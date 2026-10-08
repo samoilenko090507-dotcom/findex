@@ -1,138 +1,134 @@
 import argparse
-import sys
-import time
-import tracemalloc
+import heapq
 from pathlib import Path
-from typing import List, Set
+from typing import List, Tuple
 
-from findex.corpus import tokenize
-from findex.index import InvertedIndex, Posting
-
-
-def intersect_postings(p1: List[Posting], p2: List[Posting]) -> List[Posting]:
-    i, j = 0, 0
-    result: List[Posting] = []
-    while i < len(p1) and j < len(p2):
-        if p1[i].doc_id == p2[j].doc_id:
-            result.append(p1[i])
-            i += 1
-            j += 1
-        elif p1[i].doc_id < p2[j].doc_id:
-            i += 1
-        else:
-            j += 1
-    return result
+from findex.corpus import iter_documents, tokenize
+from findex.index import Index, open_index
+from findex.parser import parse_query
+from findex.scoring import BM25Scorer, Scorer, SearchResult, TfIdfScorer
 
 
-def boolean_search_merge(index: InvertedIndex, query: str) -> List[int]:
-    raw_tokens = list(tokenize(query))
-    if not raw_tokens:
-        return []
-
-    tokens: List[str] = []
-    exclude_tokens: List[str] = []
-    is_not = False
-
-    for t in raw_tokens:
-        if t in ("not", "ні"):
-            is_not = True
-            continue
-        if is_not:
-            exclude_tokens.append(t)
-            is_not = False
-        elif t not in ("and", "і", "та", "or", "або"):
-            tokens.append(t)
-
+def extract_snippet(text: str, query_tokens: List[str], window: int = 80) -> str:
+    tokens = list(tokenize(text))
     if not tokens:
-        return []
+        return text[: window * 2]
 
-    tokens.sort(key=lambda t: len(index.postings.get(t, [])))
-
-    first_postings = index.postings.get(tokens[0], [])
-    current_postings = list(first_postings)
-
-    for term in tokens[1:]:
-        term_postings = index.postings.get(term, [])
-        current_postings = intersect_postings(current_postings, term_postings)
-        if not current_postings:
+    lower_query = {t.lower() for t in query_tokens}
+    best_idx = -1
+    for idx, t in enumerate(tokens):
+        if t in lower_query:
+            best_idx = idx
             break
 
-    result_doc_ids = [p.doc_id for p in current_postings]
+    if best_idx == -1:
+        return text[: window * 2].strip() + "..."
 
-    for ex in exclude_tokens:
-        ex_ids = {p.doc_id for p in index.postings.get(ex, [])}
-        result_doc_ids = [did for did in result_doc_ids if did not in ex_ids]
+    target_word = tokens[best_idx]
+    pos = text.lower().find(target_word)
+    if pos == -1:
+        return text[: window * 2].strip() + "..."
 
-    return result_doc_ids
+    start = max(0, pos - window)
+    end = min(len(text), pos + len(target_word) + window)
+    raw_snippet = text[start:end].replace("\n", " ").strip()
+
+    highlighted = raw_snippet
+    for q in lower_query:
+        import re
+        highlighted = re.sub(
+            rf"\b({re.escape(q)})\b",
+            r"[\1]",
+            highlighted,
+            flags=re.IGNORECASE,
+        )
+
+    return f"...{highlighted}..."
 
 
-def boolean_search_set(index: InvertedIndex, query: str) -> List[int]:
-    raw_tokens = list(tokenize(query))
-    if not raw_tokens:
+def ranked_search(
+    index: Index,
+    query_str: str,
+    scorer: Scorer,
+    corpus_dir: Path,
+    top_k: int = 5,
+) -> List[Tuple[float, int, str, str]]:
+    tree = parse_query(query_str)
+    candidate_doc_ids = tree.evaluate(index)
+    if not candidate_doc_ids:
         return []
 
-    tokens: List[str] = []
-    exclude_tokens: List[str] = []
-    is_not = False
+    query_terms = [t.lower() for t in tokenize(query_str) if t.lower() in index]
+    if not query_terms:
+        query_terms = [t.lower() for t in tokenize(query_str)]
 
-    for t in raw_tokens:
-        if t in ("not", "ні"):
-            is_not = True
-            continue
-        if is_not:
-            exclude_tokens.append(t)
-            is_not = False
-        elif t not in ("and", "і", "та", "or", "або"):
-            tokens.append(t)
+    doc_texts = {}
+    if corpus_dir.exists():
+        for doc_id, (_, text) in enumerate(iter_documents(corpus_dir)):
+            if doc_id in candidate_doc_ids:
+                doc_texts[doc_id] = text
 
-    if not tokens:
-        return []
+    heap: List[SearchResult] = []
+    total_docs = index.num_docs
+    avg_len = index.avg_doc_length
 
-    result_set: Set[int] = {p.doc_id for p in index.postings.get(tokens[0], [])}
+    for doc_id in candidate_doc_ids:
+        meta = index.documents.get(doc_id)
+        doc_len = meta.length if meta else 1
+        doc_score = 0.0
 
-    for term in tokens[1:]:
-        term_docs = {p.doc_id for p in index.postings.get(term, [])}
-        result_set.intersection_update(term_docs)
+        for term in query_terms:
+            if term in index:
+                postings = index[term]
+                tf = 0
+                for p in postings:
+                    if p.doc_id == doc_id:
+                        tf = p.frequency
+                        break
+                df_val = index.df(term)
+                term_score = scorer.score_term(tf, doc_len, df_val, total_docs, avg_len)
+                doc_score += term_score
 
-    for ex in exclude_tokens:
-        ex_docs = {p.doc_id for p in index.postings.get(ex, [])}
-        result_set.difference_update(ex_docs)
+        res = SearchResult(score=doc_score, doc_id=doc_id)
+        if len(heap) < top_k:
+            heapq.heappush(heap, res)
+        else:
+            heapq.heappushpop(heap, res)
 
-    return sorted(result_set)
+    top_results = heapq.nlargest(top_k, heap)
+    results = []
+    for item in top_results:
+        meta = index.documents.get(item.doc_id)
+        name = meta.name if meta else f"doc_{item.doc_id}"
+        raw_text = doc_texts.get(item.doc_id, "")
+        snippet = extract_snippet(raw_text, query_terms)
+        results.append((item.score, item.doc_id, name, snippet))
+
+    return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Пошук у двійковому індексі findex")
-    parser.add_argument("index_path", type=Path, help="Шлях до збереженого файлу індексу")
-    parser.add_argument("query", type=str, help="Пошуковий запит (наприклад, 'слово1 слово2')")
-    parser.add_argument("--engine", choices=["merge", "set"], default="merge", help="Алгоритм пошуку")
+    parser = argparse.ArgumentParser(description="Ранжований пошук findex (Лаб 3)")
+    parser.add_argument("index_path", type=Path, help="Шлях до індексу (.bin або .pkl)")
+    parser.add_argument("query", type=str, help="Пошуковий запит")
+    parser.add_argument("--scorer", choices=["bm25", "tfidf"], default="bm25", help="Модель ранжування")
+    parser.add_argument("--corpus", type=Path, default=Path("data"), help="Шлях до теки корпусу для сніпетів")
+    parser.add_argument("--top", type=int, default=5, help="Кількість результатів")
     args = parser.parse_args()
 
-    tracemalloc.start()
-    start_time = time.perf_counter()
+    scorer: Scorer = BM25Scorer() if args.scorer == "bm25" else TfIdfScorer()
 
-    if str(args.index_path).endswith(".pkl"):
-        index = InvertedIndex.load_pickle(args.index_path)
-    else:
-        index = InvertedIndex.load_binary(args.index_path)
+    with open_index(args.index_path) as index:
+        results = ranked_search(index, args.query, scorer, args.corpus, top_k=args.top)
 
-    if args.engine == "merge":
-        doc_ids = boolean_search_merge(index, args.query)
-    else:
-        doc_ids = boolean_search_set(index, args.query)
+    print(f"\nРезультати пошуку ({args.scorer.upper()}, top-{args.top}):")
+    if not results:
+        print("Нічого не знайдено.")
+        return
 
-    elapsed_time = time.perf_counter() - start_time
-    _, peak_memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    print(f"Знайдено документів: {len(doc_ids)} (рушій: {args.engine})")
-    for doc_id in doc_ids:
-        meta = index.documents.get(doc_id)
-        if meta:
-            print(f"  [ID {meta.doc_id}] {meta.name} (довжина: {meta.length} токенів)")
-
-    print(f"Час виконання: {elapsed_time:.6f} с")
-    print(f"Пікова пам'ять: {peak_memory / 1024:.2f} КБ")
+    for rank, (score, doc_id, name, snippet) in enumerate(results, start=1):
+        print(f"\n{rank}. [{name}] (Doc ID: {doc_id}, Score: {score:.4f})")
+        print(f"   Сніпет: {snippet}")
 
 
 if __name__ == "__main__":
