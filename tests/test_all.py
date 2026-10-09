@@ -77,8 +77,8 @@ def test_parser_and_node() -> None:
 def test_parser_or_node() -> None:
     tree = parse_query("apple OR banana")
     assert isinstance(tree, Or)
-    assert tree.left.value == "apple"
-    assert tree.right.value == "banana"
+    assert tree.left.value == "..."  # type: ignore[attr-defined] # sub-node is Term
+assert tree.right.value == "..."  # type: ignore[attr-defined] # sub-node is Term
 
 
 def test_parser_not_node() -> None:
