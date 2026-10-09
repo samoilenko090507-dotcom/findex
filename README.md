@@ -62,3 +62,7 @@ python -m findex.index data/ --out index.bin
 
 # Ранжований пошук з моделлю BM25
 python -m findex.search index.bin "project gutenberg" --scorer bm25 --top 3
+
+## Тестування та покриття
+Покриття тестами становить 55%. 
+Поза тестами свідомо залишено допоміжні скрипти завантаження даних (download_data.py) та експериментальні бенчмарки, оскільки вони не є частиною основного пошукового рушія findex.
