@@ -1,13 +1,16 @@
 import time
 import tracemalloc
 from pathlib import Path
+
 from findex.corpus import build_stats_eager, build_stats_stream
 
 
 def run_benchmark():
     data_path = Path("data")
     if not data_path.exists() or not list(data_path.glob("*.txt")):
-        print("Папка data порожня або не знайдена. Спочатку запустіть download_data.py!")
+        print(
+            "Папка data порожня або не знайдена. Спочатку запустіть download_data.py!"
+        )
         return
 
     print("=== ЗАПУСК ПОРІВНЯННЯ (BENCHMARK) ===\n")
@@ -26,7 +29,7 @@ def run_benchmark():
     tracemalloc.start()
     start_time = time.perf_counter()
 
-    eager_docs, eager_tokens, eager_vocab, eager_top = build_stats_eager(data_path)
+    _eager_docs, _eager_tokens, _eager_vocab, _eager_top = build_stats_eager(data_path)
 
     eager_time = time.perf_counter() - start_time
     _, eager_peak = tracemalloc.get_traced_memory()

@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from typing import List, Set, Union
 
 
 class Node:
@@ -13,7 +12,7 @@ class Node:
     def __invert__(self) -> "Not":
         return Not(self)
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index) -> set[int]:
         raise NotImplementedError
 
 
@@ -21,7 +20,7 @@ class Node:
 class Term(Node):
     value: str
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index) -> set[int]:
         normalized = self.value.strip().lower()
         if normalized in index:
             return {p.doc_id for p in index[normalized]}
@@ -30,9 +29,9 @@ class Term(Node):
 
 @dataclass(frozen=True)
 class Phrase(Node):
-    terms: List[str]
+    terms: list[str]
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index) -> set[int]:
         if not self.terms:
             return set()
         clean_terms = [t.strip().lower() for t in self.terms if t.strip()]
@@ -85,7 +84,7 @@ class And(Node):
     left: Node
     right: Node
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index) -> set[int]:
         return self.left.evaluate(index) & self.right.evaluate(index)
 
 
@@ -94,7 +93,7 @@ class Or(Node):
     left: Node
     right: Node
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index) -> set[int]:
         return self.left.evaluate(index) | self.right.evaluate(index)
 
 
@@ -102,7 +101,7 @@ class Or(Node):
 class Not(Node):
     child: Node
 
-    def evaluate(self, index) -> Set[int]:
+    def evaluate(self, index) -> set[int]:
         all_docs = set(index.documents.keys())
         return all_docs - self.child.evaluate(index)
 
@@ -112,7 +111,7 @@ class QueryParser:
         self.tokens = self._tokenize(text)
         self.pos = 0
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         token_spec = [
             ("PHRASE", r'"[^"]*"'),
             ("LPAREN", r"\("),
@@ -139,7 +138,7 @@ class QueryParser:
                 tokens.append(val)
         return tokens
 
-    def peek(self) -> Union[str, None]:
+    def peek(self) -> str | None:
         if self.pos < len(self.tokens):
             return self.tokens[self.pos]
         return None

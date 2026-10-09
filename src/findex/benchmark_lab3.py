@@ -1,8 +1,10 @@
 from pathlib import Path
-from findex.index import Index, open_index, cached_query_ids
-from findex.parser import parse_query, Term, Phrase, And, Or, Not
-from findex.scoring import TfIdfScorer, BM25Scorer
+
+from findex.index import Index, cached_query_ids, open_index
+from findex.parser import parse_query
+from findex.scoring import BM25Scorer, TfIdfScorer
 from findex.search import ranked_search
+
 
 def run_tests():
     corpus_dir = Path("data")
@@ -10,7 +12,7 @@ def run_tests():
         corpus_dir = Path("src/findex/data")
 
     bin_path = Path("index.bin")
-    
+
     print("=== 1. ПЕРЕВІРКА ПАРСЕРА ЗАПИТІВ ===")
     test_query = 'python AND (async OR await) NOT java "event loop"'
     parsed_tree = parse_query(test_query)
@@ -35,17 +37,25 @@ def run_tests():
     freq_term = sorted_terms[-1]
     s_rare = bm25.score_term(1, 100, idx.df(rare_term), total_docs, avg_len)
     s_freq = bm25.score_term(1, 100, idx.df(freq_term), total_docs, avg_len)
-    print(f"1) Рідкісний ('{rare_term}', score={s_rare:.4f}) вище частого ('{freq_term}', score={s_freq:.4f}): {s_rare > s_freq}")
+    print(
+        f"1) Рідкісний ('{rare_term}', score={s_rare:.4f}) вище частого ('{freq_term}', score={s_freq:.4f}): {s_rare > s_freq}"
+    )
 
     # 2. 20-те повторення в BM25 додає менше, ніж перше
     s_first = bm25.score_term(1, 100, 2, total_docs, avg_len)
-    s_20 = bm25.score_term(20, 100, 2, total_docs, avg_len) - bm25.score_term(19, 100, 2, total_docs, avg_len)
-    print(f"2) Приріст 1-го входження ({s_first:.4f}) суттєво більший за приріст 20-го ({s_20:.4f}): {s_first > s_20}")
+    s_20 = bm25.score_term(20, 100, 2, total_docs, avg_len) - bm25.score_term(
+        19, 100, 2, total_docs, avg_len
+    )
+    print(
+        f"2) Приріст 1-го входження ({s_first:.4f}) суттєво більший за приріст 20-го ({s_20:.4f}): {s_first > s_20}"
+    )
 
     # 3. Короткий документ з одним входженням проти довгого
     s_short = bm25.score_term(1, 50, 2, total_docs, avg_len)
     s_long = bm25.score_term(1, 1000, 2, total_docs, avg_len)
-    print(f"3) Короткий документ (len=50, score={s_short:.4f}) вище довгого (len=1000, score={s_long:.4f}): {s_short > s_long}\n")
+    print(
+        f"3) Короткий документ (len=50, score={s_short:.4f}) вище довгого (len=1000, score={s_long:.4f}): {s_short > s_long}\n"
+    )
 
     print("=== 4. ПЕРЕВІРКА КЕШУ ТА ДЕКОРАТОРІВ ===")
     print("Перший запит через cached_query_ids (холодний):")
@@ -67,7 +77,7 @@ def run_tests():
         "archive",
         "terms of use",
         "license",
-        "permission"
+        "permission",
     ]
 
     print(f"{'Запит':<25} | {'TF-IDF P@5':<12} | {'BM25 P@5':<12}")
@@ -80,6 +90,7 @@ def run_tests():
             p_tf = len(r_tf) / 5.0 if len(r_tf) <= 5 else 1.0
             p_bm = len(r_bm) / 5.0 if len(r_bm) <= 5 else 1.0
             print(f"{q:<25} | {p_tf:<12.2f} | {p_bm:<12.2f}")
+
 
 if __name__ == "__main__":
     run_tests()

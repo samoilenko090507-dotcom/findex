@@ -1,4 +1,3 @@
-import pytest
 from findex.corpus import tokenize
 
 

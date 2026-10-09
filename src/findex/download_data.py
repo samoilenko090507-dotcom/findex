@@ -19,7 +19,7 @@ for name, url in BOOKS.items():
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req) as resp, open(file_path, "wb") as f:
                 f.write(resp.read())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"Помилка завантаження {name}: {e}")
 
 print("Усі доступні тексти завантажено в папку data/")
