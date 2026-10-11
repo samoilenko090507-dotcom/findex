@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from findex.cli import app
 from findex.corpus import tokenize
-from findex.index import DocMeta, Index, Posting, open_index
+from findex.index import DocMeta, Index, Posting, open_index, build_index
 from findex.parser import And, Not, Or, Term, parse_query
 from findex.scoring import BM25Scorer, TfIdfScorer
 
@@ -78,7 +78,7 @@ def test_parser_or_node() -> None:
     tree = parse_query("apple OR banana")
     assert isinstance(tree, Or)
     assert tree.left.value == "..."  # type: ignore[attr-defined] # sub-node is Term
-assert tree.right.value == "..."  # type: ignore[attr-defined] # sub-node is Term
+    assert tree.right.value == "..."  # type: ignore[attr-defined] # sub-node is Term
 
 
 def test_parser_not_node() -> None:
@@ -260,3 +260,20 @@ def test_hypothesis_save_load_equivalence(tmp_path: Path) -> None:
             assert loaded[t] == idx[t]
 
     run_property()
+
+def test_parallel_indexing_equivalence(small_corpus: Path) -> None:
+        idx_serial = build_index(small_corpus, workers=1, executor="serial")
+        idx_threads = build_index(small_corpus, workers=2, executor="threads")
+        idx_procs = build_index(small_corpus, workers=2, executor="processes")
+
+        assert set(idx_serial.documents.keys()) == set(idx_threads.documents.keys()) == set(idx_procs.documents.keys())
+        for d_id, meta in idx_serial.documents.items():
+            assert idx_threads.documents[d_id].name == meta.name
+            assert idx_procs.documents[d_id].name == meta.name
+            assert idx_threads.documents[d_id].length == meta.length
+            assert idx_procs.documents[d_id].length == meta.length
+
+        assert set(idx_serial._postings.keys()) == set(idx_threads._postings.keys()) == set(idx_procs._postings.keys())
+        for term, posts in idx_serial._postings.items():
+            assert idx_threads._postings[term] == posts
+            assert idx_procs._postings[term] == posts

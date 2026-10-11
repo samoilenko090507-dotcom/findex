@@ -3,8 +3,9 @@ import logging
 import pickle
 import struct
 import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property, lru_cache, wraps
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def timed[F: Callable[..., Any]](func: F) -> F:
+def timed(func: F) -> F:
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         t0 = time.perf_counter()
@@ -246,3 +247,104 @@ def cached_query_ids(query: str, index_path_str: str) -> tuple[int, ...]:
         tree = parse_query(query)
         doc_ids = tree.evaluate(index)
         return tuple(sorted(doc_ids))
+
+def build_partial(
+    file_paths: Sequence[Path | str],
+    start_doc_id: int = 0,
+    store_positions: bool = True,
+
+) -> Index:
+    index = Index()
+    current_doc_id = start_doc_id
+    for path_str in file_paths:
+        p = Path(path_str)
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        tokens = list(tokenize(text))
+        doc_len = len(tokens)
+        index.documents[current_doc_id] = DocMeta(
+            doc_id=current_doc_id,
+            name=p.name,
+            length=doc_len,
+        )
+        term_counts = Counter(tokens)
+        positions_map: dict[str, list[int]] = defaultdict(list)
+        if store_positions:
+            for idx, t in enumerate(tokens):
+                positions_map[t].append(idx)
+
+        for term, count in term_counts.items():
+            pos = tuple(positions_map[term]) if store_positions else ()
+            index._postings[term].append(
+                Posting(doc_id=current_doc_id, frequency=count, positions=pos)
+            )
+        current_doc_id += 1
+
+    for term in index._postings:
+        index._postings[term].sort(key=lambda p: p.doc_id)
+    return index
+
+def merge(indexes: list[Index]) -> Index:
+    merged = Index()
+    if not indexes:
+        return merged
+    for idx in indexes:
+        merged.documents.update(idx.documents)
+    all_terms: set[str] = set()
+    for idx in indexes:
+        all_terms.update(idx._postings.keys())
+    for term in all_terms:
+        posts: list[Posting] = []
+        for idx in indexes:
+            posts.extend(idx._postings.get(term, []))
+        posts.sort(key=lambda p: p.doc_id)
+        merged._postings[term] = posts
+    return merged
+
+def build_index(
+    corpus_dir: Path | str,
+    workers: int = 1,
+    executor: str = "processes",
+    store_positions: bool = True,
+) -> Index:
+    p = Path(corpus_dir)
+    files = sorted(list(p.glob("*.txt")))
+    if not files:
+        return Index()
+
+    w = max(1, workers)
+    chunk_size = (len(files) + w - 1) // w
+    chunks = [files[i : i + chunk_size] for i in range(0, len(files), chunk_size)]
+
+    tasks: list[tuple[list[Path], int]] = []
+    curr_id = 0
+    for ch in chunks:
+        tasks.append((ch, curr_id))
+        curr_id += len(ch)
+
+    if executor == "serial" or w == 1:
+        partials = [
+            build_partial(ch, start_id, store_positions=store_positions)
+            for ch, start_id in tasks
+        ]
+    elif executor == "threads":
+        with ThreadPoolExecutor(max_workers=w) as pool:
+            futures = [
+                pool.submit(build_partial, ch, start_id, store_positions)
+                for ch, start_id in tasks
+            ]
+            partials = [f.result() for f in futures]
+    elif executor == "processes":
+        with ProcessPoolExecutor(max_workers=w) as pool:
+            futures = [
+                pool.submit(build_partial, ch, start_id, store_positions)
+                for ch, start_id in tasks
+            ]
+            partials = [f.result() for f in futures]
+    else:
+        raise ValueError(f"Невідомий тип виконавця: {executor}")
+
+    return merge(partials)

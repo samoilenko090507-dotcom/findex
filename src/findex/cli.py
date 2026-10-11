@@ -15,7 +15,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from findex.index import Index, open_index
+from findex.index import Index, open_index, build_index
 from findex.scoring import BM25Scorer, Scorer, TfIdfScorer
 from findex.search import ranked_search
 
@@ -72,7 +72,14 @@ def index(
         bool,
         typer.Option("--positions/--no-positions", help="Зберігати позиції токенів."),
     ] = True,
-) -> None:
+    workers: Annotated[
+        int, typer.Option("--workers", "-w", help="Кількість воркерів.")
+    ] = 1,
+    executor: Annotated[
+        Literal["serial", "threads", "processes"],
+        typer.Option("--executor", help="Тип виконавця (serial, threads, processes)."),
+    
+    ] = "processes",) -> None:
     if not corpus_dir.exists() or not corpus_dir.is_dir():
         err_console.print(f"Помилка: директорія корпусу '{corpus_dir}' не знайдена.")
         raise typer.Exit(code=1)
@@ -82,18 +89,12 @@ def index(
         err_console.print(f"Помилка: у теці '{corpus_dir}' немає файлів .txt.")
         raise typer.Exit(code=1)
 
-    idx = Index()
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[green]Індексація файлів...", total=len(files))
-        idx.build_from_directory(corpus_dir, store_positions=positions)
-        progress.update(task, completed=len(files))
+    idx = build_index(
+        corpus_dir,
+        workers=workers,
+        executor=executor,
+        store_positions=positions,
+    )
 
     if str(output).endswith(".pkl"):
         idx.save_pickle(output)
