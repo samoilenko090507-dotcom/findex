@@ -1,4 +1,4 @@
-import time
+﻿import time
 from pathlib import Path
 
 import hypothesis.strategies as st
@@ -77,8 +77,8 @@ def test_parser_and_node() -> None:
 def test_parser_or_node() -> None:
     tree = parse_query("apple OR banana")
     assert isinstance(tree, Or)
-    assert tree.left.value == "..."  # type: ignore[attr-defined] # sub-node is Term
-    assert tree.right.value == "..."  # type: ignore[attr-defined] # sub-node is Term
+    assert tree.left.value == "apple"  # type: ignore[attr-defined] # sub-node is Term
+    assert tree.right.value == "banana"  # type: ignore[attr-defined] # sub-node is Term
 
 
 def test_parser_not_node() -> None:
@@ -277,3 +277,5 @@ def test_parallel_indexing_equivalence(small_corpus: Path) -> None:
         for term, posts in idx_serial._postings.items():
             assert idx_threads._postings[term] == posts
             assert idx_procs._postings[term] == posts
+
+

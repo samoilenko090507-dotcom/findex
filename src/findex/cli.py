@@ -1,6 +1,8 @@
 import json
 import logging
 import sys
+import asyncio
+from findex.crawler import run_crawler_cli
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -190,6 +192,15 @@ def stats(
 
         console.print(table)
 
-
+@app.command()
+def crawl(
+    url: Annotated[str, typer.Argument(help="Початковий URL для краулінгу")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Шлях до файлу JSONL")] = Path("crawled_pages.jsonl"),
+    max_pages: Annotated[int, typer.Option("--max-pages", "-m", help="Максимум сторінок")] = 200,
+    concurrency: Annotated[int, typer.Option("--concurrency", "-c", help="Кількість одночасних запитів")] = 5,
+    delay: Annotated[float, typer.Option("--delay", "-d", help="Пауза між запитами до одного хоста")] = 0.5,
+) -> None:
+    """Асинхронний збір веб-сторінок у формат JSONL."""
+    asyncio.run(run_crawler_cli(url, str(output), max_pages, concurrency, delay))
 if __name__ == "__main__":
     app()
