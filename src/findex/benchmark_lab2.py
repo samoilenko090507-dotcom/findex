@@ -1,4 +1,5 @@
-import array
+# type: ignore
+import array 
 import os
 import time
 import tracemalloc
