@@ -1,206 +1,35 @@
-import json
-import logging
-import sys
-import asyncio
-from findex.crawler import run_crawler_cli
-from pathlib import Path
-from typing import Annotated, Literal
+﻿import typer
+import uvicorn
+from findex.crawler import main_crawl
+from findex.web.config import settings
 
-import typer
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
-from rich.table import Table
-
-from findex.index import Index, open_index, build_index
-from findex.scoring import BM25Scorer, Scorer, TfIdfScorer
-from findex.search import ranked_search
-
-app = typer.Typer(
-    name="findex",
-    help="findex: консольний інвертований індекс та ранжований пошук.",
-    no_args_is_help=True,
-)
-
-console = Console()
-err_console = Console(stderr=True)
-
-
-def setup_logging(verbose: int) -> None:
-    if verbose == 0:
-        level = logging.WARNING
-    elif verbose == 1:
-        level = logging.INFO
-    else:
-        level = logging.DEBUG
-
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        stream=sys.stderr,
-        force=True,
-    )
-
-
-@app.callback()
-def main(
-    verbose: Annotated[
-        int,
-        typer.Option(
-            "-v",
-            "--verbose",
-            count=True,
-            help="Рівень логування (-v для INFO, -vv для DEBUG).",
-        ),
-    ] = 0,
-) -> None:
-    setup_logging(verbose)
-
-
-@app.command()
-def index(
-    corpus_dir: Annotated[
-        Path, typer.Argument(help="Шлях до теки з документами корпусу.")
-    ],
-    output: Annotated[
-        Path, typer.Option("-o", "--out", help="Файл збереження індексу.")
-    ] = Path("index.bin"),
-    positions: Annotated[
-        bool,
-        typer.Option("--positions/--no-positions", help="Зберігати позиції токенів."),
-    ] = True,
-    workers: Annotated[
-        int, typer.Option("--workers", "-w", help="Кількість воркерів.")
-    ] = 1,
-    executor: Annotated[
-        Literal["serial", "threads", "processes"],
-        typer.Option("--executor", help="Тип виконавця (serial, threads, processes)."),
-    
-    ] = "processes",) -> None:
-    if not corpus_dir.exists() or not corpus_dir.is_dir():
-        err_console.print(f"Помилка: директорія корпусу '{corpus_dir}' не знайдена.")
-        raise typer.Exit(code=1)
-
-    files = list(corpus_dir.glob("*.txt"))
-    if not files:
-        err_console.print(f"Помилка: у теці '{corpus_dir}' немає файлів .txt.")
-        raise typer.Exit(code=1)
-
-    idx = build_index(
-        corpus_dir,
-        workers=workers,
-        executor=executor,
-        store_positions=positions,
-    )
-
-    if str(output).endswith(".pkl"):
-        idx.save_pickle(output)
-    else:
-        idx.save_binary(output)
-
-    console.print(
-        f"[bold green]Успіх:[/bold green] збережено {len(idx)} слів із {idx.num_docs} документів у '{output}'."
-    )
-
-
-@app.command()
-def search(
-    index_path: Annotated[
-        Path, typer.Argument(help="Шлях до файлу індексу (.bin або .pkl).")
-    ],
-    query: Annotated[str, typer.Argument(help="Пошуковий запит.")],
-    scorer: Annotated[
-        Literal["bm25", "tfidf"], typer.Option("--scorer", help="Модель ранжування.")
-    ] = "bm25",
-    top: Annotated[
-        int, typer.Option("--top", "-k", help="Кількість топових результатів.")
-    ] = 5,
-    corpus_dir: Annotated[
-        Path, typer.Option("--corpus", help="Шлях до теки документів для сніпетів.")
-    ] = Path("data"),
-    as_json: Annotated[
-        bool, typer.Option("--json", help="Вивести результат у чистому форматі JSON.")
-    ] = False,
-) -> None:
-    if not index_path.exists():
-        err_console.print(f"Помилка: файл індексу '{index_path}' не знайдено.")
-        raise typer.Exit(code=1)
-
-    scorer_obj: Scorer = BM25Scorer() if scorer == "bm25" else TfIdfScorer()
-
-    try:
-        with open_index(index_path) as idx:
-            results = ranked_search(idx, query, scorer_obj, corpus_dir, top_k=top)
-    except Exception as exc:  # noqa: BLE001
-        err_console.print(f"Помилка виконання пошуку: {exc}")
-        raise typer.Exit(code=1)
-
-    if as_json:
-        data = [
-            {
-                "rank": rank,
-                "score": score,
-                "doc_id": doc_id,
-                "name": name,
-                "snippet": snippet,
-            }
-            for rank, (score, doc_id, name, snippet) in enumerate(results, start=1)
-        ]
-        sys.stdout.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-        return
-
-    if not results:
-        console.print("[yellow]Нічого не знайдено за заданим запитом.[/yellow]")
-        return
-
-    table = Table(title=f"Результати пошуку ({scorer.upper()}, top-{top})")
-    table.add_column("№", style="cyan", justify="right")
-    table.add_column("Документ", style="green")
-    table.add_column("Doc ID", justify="right")
-    table.add_column("Бал", justify="right", style="magenta")
-    table.add_column("Сніпет", style="dim")
-
-    for rank, (score, doc_id, name, snippet) in enumerate(results, start=1):
-        table.add_row(str(rank), name, str(doc_id), f"{score:.4f}", snippet)
-
-    console.print(table)
-
-
-@app.command()
-def stats(
-    index_path: Annotated[
-        Path, typer.Argument(help="Шлях до файлу індексу (.bin або .pkl).")
-    ],
-) -> None:
-    if not index_path.exists():
-        err_console.print(f"Помилка: файл індексу '{index_path}' не знайдено.")
-        raise typer.Exit(code=1)
-
-    with open_index(index_path) as idx:
-        table = Table(title="Статистика індексу")
-        table.add_column("Параметр", style="cyan")
-        table.add_column("Значення", style="green")
-
-        table.add_row("Унікальних слів (термінів)", str(len(idx)))
-        table.add_row("Кількість документів", str(idx.num_docs))
-        table.add_row("Середня довжина документа", f"{idx.avg_doc_length:.2f}")
-
-        console.print(table)
+app = typer.Typer(name="findex", help="findex – локальний пошуковий рушій")
 
 @app.command()
 def crawl(
-    url: Annotated[str, typer.Argument(help="Початковий URL для краулінгу")],
-    output: Annotated[Path, typer.Option("--output", "-o", help="Шлях до файлу JSONL")] = Path("crawled_pages.jsonl"),
-    max_pages: Annotated[int, typer.Option("--max-pages", "-m", help="Максимум сторінок")] = 200,
-    concurrency: Annotated[int, typer.Option("--concurrency", "-c", help="Кількість одночасних запитів")] = 5,
-    delay: Annotated[float, typer.Option("--delay", "-d", help="Пауза між запитами до одного хоста")] = 0.5,
-) -> None:
-    """Асинхронний збір веб-сторінок у формат JSONL."""
-    asyncio.run(run_crawler_cli(url, str(output), max_pages, concurrency, delay))
+    url: str = typer.Argument(..., help="Початковий URL для збору"),
+    max_pages: int = typer.Option(200, "--max-pages", help="Максимальна кількість сторінок"),
+    concurrency: int = typer.Option(5, "--concurrency", help="Кількість паралельних воркерів"),
+    delay: float = typer.Option(0.5, "--delay", help="Мінімальна пауза між запитами на хост у секундах"),
+    output: str = typer.Option("crawled_pages.jsonl", "--output", help="Шлях до файлу JSONL"),
+):
+    """Асинхронний збір сторінок за допомогою crawler."""
+    main_crawl(
+        start_url=url,
+        max_pages=max_pages,
+        concurrency=concurrency,
+        per_host_delay=delay,
+        output_path=output,
+    )
+
+@app.command()
+def serve(
+    host: str = typer.Option(settings.host, "--host", help="Хост для запуску веб-сервера"),
+    port: int = typer.Option(settings.port, "--port", help="Порт для веб-сервера"),
+    workers: int = typer.Option(settings.workers, "--workers", help="Кількість процесів воркерів uvicorn"),
+):
+    """Запуск веб-сервера пошуковика через uvicorn."""
+    uvicorn.run("findex.web.app:app", host=host, port=port, workers=workers, reload=False)
+
 if __name__ == "__main__":
     app()
