@@ -17,12 +17,16 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
+RUN useradd -m -u 1000 appuser
+
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app /app
+COPY --from=builder --chown=appuser:appuser /app /app
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app/src:/app" \
     PORT=8000
+
+USER appuser
 
 EXPOSE 8000
 
