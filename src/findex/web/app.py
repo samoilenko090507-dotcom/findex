@@ -117,7 +117,10 @@ def get_document(doc_id: int, index: Annotated[Index, Depends(get_index)]):
     )
 
 def execute_search(query: str, index: Index, scorer_name: str, k: int, page: int):
-    scorer = BM25Scorer() if scorer_name.lower() == "bm25" else TfIdfScorer()
+    if scorer_name.lower() == "tfidf":
+        scorer = TfIdfScorer()
+    else:
+        scorer = BM25Scorer()
     raw_results = ranked_search(
         index=index,
         query_str=query,

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 class SearchQuery(BaseModel):
     q: str = Field(..., min_length=1, description="Пошуковий запит")
     k: int = Field(10, ge=1, le=100, description="Кількість результатів на сторінку")
-    scorer: Literal["bm25", "tfidf"] = Field("bm25", description="Функція ранжування")
+    scorer: Literal["bm25", "tfidf", "semantic", "hybrid"] = Field("bm25", description="Функція ранжування")
     page: int = Field(1, ge=1, description="Номер сторінки")
 
 class SearchHit(BaseModel):
