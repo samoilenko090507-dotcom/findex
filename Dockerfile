@@ -21,8 +21,9 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app /app
 
 ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src:/app" \
     PORT=8000
 
 EXPOSE 8000
 
-CMD ["uvicorn", "findex.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn findex.web.app:app --host 0.0.0.0 --port ${PORT:-8000}"]
