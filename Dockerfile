@@ -1,36 +1,38 @@
-# syntax=docker/dockerfile:1
+# Етап 1: Збірка середовища
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project --no-dev
+# Налаштовуємо uv для компіляції та ізоляції
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-COPY . /app
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+# Копіюємо конфігурації залежностей
+COPY pyproject.toml uv.lock ./
 
+# Встановлюємо залежності без самого проєкту для кешування шару
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Копіюємо вихідний код
+COPY . .
+
+# Фінальна синхронізація проєкту
+RUN uv sync --frozen --no-dev
+
+# Етап 2: Фінальний робочий образ
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/data && \
-    chown -R appuser:appuser /app
+# Копіюємо віртуальне оточення та файли проєкту
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app /app
 
-COPY --from=builder --chown=appuser:appuser /app /app
-
+# Додаємо віртуальне середовище в PATH
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    INDEX_PATH="/app/index.bin" \
-    PORT=8000 \
-    HOST="0.0.0.0"
-
-USER appuser
+    PORT=8000
 
 EXPOSE 8000
 
-CMD ["python", "-m", "findex.cli", "serve", "--host", "0.0.0.0", "--port", "8000"]
+# Запуск сервера
+CMD ["uvicorn", "findex.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
